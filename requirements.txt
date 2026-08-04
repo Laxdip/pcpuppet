@@ -1,0 +1,17 @@
+flask
+flask-cors
+waitress
+psutil
+screen-brightness-control
+pygetwindow
+requests
+pycaw
+comtypes
+pywin32
+pystray
+Pillow
+opencv-python
+pyautogui
+pynput
+schedule
+python-dotenv
