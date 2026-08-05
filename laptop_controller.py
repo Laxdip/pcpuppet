@@ -59,5 +59,5 @@ def safe(default=None, log_name="operation"):
 
 
 # ---------------------------------------------------------------------------
-# 2. Config / auth tokenn....a random token is generated on first run and stored locally.
+# 2. Config / auth token....a random token is generated on first run and stored locally.
 # ---------------------------------------------------------------------------
