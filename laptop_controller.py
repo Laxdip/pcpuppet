@@ -36,7 +36,7 @@ logger.addHandler(_handler)
 logger.info("---- process starting (pid=%s) ----", os.getpid())
 
 # ---------------------------------------------------------------------------
-# When launched with python.exe for troubleshooting, you will now see real errors.
+# 1. When launched with python.exe for troubleshooting, you will now see real errors.
 # ---------------------------------------------------------------------------
 try:
     import ctypes
@@ -56,3 +56,8 @@ def safe(default=None, log_name="operation"):
                 return default
         return wrapper
     return deco
+
+
+# ---------------------------------------------------------------------------
+# 2. Config / auth tokenn....a random token is generated on first run and stored locally.
+# ---------------------------------------------------------------------------
