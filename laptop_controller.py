@@ -35,4 +35,24 @@ _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s
 logger.addHandler(_handler)
 logger.info("---- process starting (pid=%s) ----", os.getpid())
 
-# ---------------------------------------------------
+# ---------------------------------------------------------------------------
+# When launched with python.exe for troubleshooting, you will now see real errors.
+# ---------------------------------------------------------------------------
+try:
+    import ctypes
+except Exception:
+    logger.exception("failed to import ctypes")
+
+
+def safe(default=None, log_name="operation"):
+    """Decorator: never let a route/helper raise past this point."""
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                logger.exception(f"{log_name} failed: {e}")
+                return default
+        return wrapper
+    return deco
