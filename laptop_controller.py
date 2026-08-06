@@ -61,3 +61,23 @@ def safe(default=None, log_name="operation"):
 # ---------------------------------------------------------------------------
 # 2. Config / auth token....a random token is generated on first run and stored locally.
 # ---------------------------------------------------------------------------
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                if cfg.get("token"):
+                    return cfg
+        except Exception:
+            pass
+    cfg = {"token": secrets.token_hex(16), "port": 5000}
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    return cfg
+
+
+CONFIG = load_config()
+AUTH_TOKEN = CONFIG["token"]
+PORT = CONFIG.get("port", 5000)
+
+# ---------------------------------------------------------------------------
