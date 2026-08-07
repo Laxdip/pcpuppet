@@ -81,3 +81,64 @@ AUTH_TOKEN = CONFIG["token"]
 PORT = CONFIG.get("port", 5000)
 
 # ---------------------------------------------------------------------------
+# 3. Third-party imports
+# ---------------------------------------------------------------------------
+try:
+    from flask import Flask, render_template_string, request, jsonify, g
+    from flask_cors import CORS
+    import psutil
+    import requests
+except ImportError as e:
+    msg = (
+        f"REQUIRED PACKAGE MISSING: {e}\n\n"
+        "Run setup.bat again (double-click it) to install dependencies, "
+        "then try starting the app again.\n"
+    )
+    print(msg)
+    logger.exception("required package missing")
+    try:
+        with open(os.path.join(APP_DIR, "CRASHED.txt"), "w", encoding="utf-8") as f:
+            f.write(msg)
+    except Exception:
+        pass
+    sys.exit(1)
+
+try:
+    import screen_brightness_control as sbc
+except Exception:
+    sbc = None
+    logger.warning("screen_brightness_control unavailable; brightness disabled")
+
+try:
+    import pygetwindow as gw
+except Exception:
+    gw = None
+    logger.warning("pygetwindow unavailable; app list/close disabled")
+
+try:
+    import win32gui  # noqa: F401
+    import win32con  # noqa: F401
+except Exception:
+    pass
+
+try:
+    import win32clipboard
+except Exception:
+    win32clipboard = None
+    logger.warning("win32clipboard unavailable; clipboard push disabled")
+
+app = Flask(__name__)
+CORS(app)
+log_werkzeug = logging.getLogger("werkzeug")
+log_werkzeug.setLevel(logging.WARNING)
+
+
+@app.before_request
+def check_auth():
+    if request.path in ("/", "/favicon.ico"):
+        return None
+    if request.path.startswith("/api/login"):
+        return None
+    supplied = request.headers.get("X-Auth-Token") or request.args.get("token")
+    if supplied != AUTH_TOKEN:
+        return jsonify({"status": "error", "message": "unauthorized"}), 401
