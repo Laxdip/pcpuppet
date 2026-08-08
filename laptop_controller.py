@@ -142,3 +142,7 @@ def check_auth():
     supplied = request.headers.get("X-Auth-Token") or request.args.get("token")
     if supplied != AUTH_TOKEN:
         return jsonify({"status": "error", "message": "unauthorized"}), 401
+
+# ---------------------------------------------------------------------------
+# 4. Volume helper
+# ---------------------------------------------------------------------------
