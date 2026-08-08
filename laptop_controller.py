@@ -273,3 +273,8 @@ def take_screenshot_bytes(max_width=1280):
     img.save(buf, format="JPEG", quality=65, optimize=False)
     buf.seek(0)
     return buf
+
+
+# ---------------------------------------------------------------------------
+# 5. HTML
+# ---------------------------------------------------------------------------
