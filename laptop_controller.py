@@ -143,6 +143,39 @@ def check_auth():
     if supplied != AUTH_TOKEN:
         return jsonify({"status": "error", "message": "unauthorized"}), 401
 
+
 # ---------------------------------------------------------------------------
 # 4. Volume helper
 # ---------------------------------------------------------------------------
+@safe(default=False, log_name="set_volume")
+def set_volume(level):
+    from ctypes import cast, POINTER
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+    devices = AudioUtilities.GetSpeakers()
+    interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    volume = cast(interface, POINTER(IAudioEndpointVolume))
+    volume.SetMasterVolumeLevelScalar(max(0.0, min(1.0, level / 100.0)), None)
+    return True
+
+
+@safe(default=50, log_name="get_volume")
+def get_volume():
+    from ctypes import cast, POINTER
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+    devices = AudioUtilities.GetSpeakers()
+    interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    volume = cast(interface, POINTER(IAudioEndpointVolume))
+    return int(volume.GetMasterVolumeLevelScalar() * 100)
+
+
+def nudge_volume(direction):
+    """Fallback for machines without pycaw: simulate media keys."""
+    VK_VOLUME_UP, VK_VOLUME_DOWN = 0xAF, 0xAE
+    key = VK_VOLUME_UP if direction > 0 else VK_VOLUME_DOWN
+    for _ in range(5):
+        ctypes.windll.user32.keybd_event(key, 0, 0, 0)
+        time.sleep(0.05)
