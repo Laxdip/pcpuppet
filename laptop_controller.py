@@ -956,4 +956,13 @@ def start_ngrok():
 # ---------------------------------------------------------------------------
 # 11. Flask server thread...waitress if available, else Flask dev server
 # ---------------------------------------------------------------------------
-
+def run_server():
+    try:
+        from waitress import serve
+        logger.info(f"starting waitress on 0.0.0.0:{PORT}")
+        serve(app, host="0.0.0.0", port=PORT, threads=8)
+    except ImportError:
+        logger.warning("waitress not installed, falling back to Flask dev server")
+        app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True, use_reloader=False)
+    except Exception:
+        logger.exception("server crashed")
