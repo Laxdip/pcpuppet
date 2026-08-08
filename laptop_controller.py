@@ -179,3 +179,49 @@ def nudge_volume(direction):
     for _ in range(5):
         ctypes.windll.user32.keybd_event(key, 0, 0, 0)
         time.sleep(0.05)
+
+
+# ---------------------------------------------------------------------------
+# 4b. Custom on screen message (popup + optional text to speech)
+# ---------------------------------------------------------------------------
+MB_ICONINFORMATION = 0x40
+MB_SYSTEMMODAL = 0x1000  # keeps the box on top of whatever's currently open
+
+
+def show_popup_message(title, message):
+    """Show a Windows message box on the physical screen. Runs in its own
+    thread since MessageBoxW blocks until someone clicks OK, and we don't
+    want that to block the Flask request."""
+    def _show():
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                0, message[:1000], (title or "System Notice")[:200],
+                MB_ICONINFORMATION | MB_SYSTEMMODAL
+            )
+        except Exception:
+            logger.exception("popup message failed")
+    threading.Thread(target=_show, daemon=True).start()
+
+
+def speak_message(message):
+    """Read the message aloud using Windows' built-in text-to-speech
+    (System.Speech via PowerShell). Passed through an environment variable
+    rather than embedded in the command string, so odd characters/quotes in
+    the message can't break the PowerShell invocation."""
+    def _speak():
+        try:
+            env = os.environ.copy()
+            env["LC_SPEAK_TEXT"] = message[:1000]
+            ps_script = (
+                "Add-Type -AssemblyName System.Speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$s.Speak($env:LC_SPEAK_TEXT)"
+            )
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except Exception:
+            logger.exception("speak message failed")
+    threading.Thread(target=_speak, daemon=True).start()
