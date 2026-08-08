@@ -716,3 +716,180 @@ if (TOKEN) { document.getElementById('tokenInput').value = TOKEN; doLogin(); }
 # ---------------------------------------------------------------------------
 # 9. Routes
 # ---------------------------------------------------------------------------
+@app.route("/")
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+
+@app.route("/api/public_url")
+def get_public_url():
+    try:
+        response = requests.get("http://localhost:4040/api/tunnels", timeout=2)
+        data = response.json()
+        if data.get("tunnels"):
+            return jsonify({"url": data["tunnels"][0]["public_url"]})
+    except Exception:
+        pass
+    return jsonify({"url": f"http://{get_local_ip()}:{PORT} (local network only)"})
+
+
+@app.route("/api/status")
+def get_status():
+    try:
+        system = f"{platform.system()} {platform.release()}"
+        battery = psutil.sensors_battery()
+        battery_status = (
+            f"{battery.percent}% {'plugged' if battery.power_plugged else 'battery'}"
+            if battery else "no battery"
+        )
+        cpu = psutil.cpu_percent(interval=0.3)
+        memory_percent = psutil.virtual_memory().percent
+        return jsonify({
+            "system": system,
+            "hostname": platform.node(),
+            "battery": battery_status,
+            "cpu": cpu,
+            "memory": memory_percent,
+        })
+    except Exception as e:
+        logger.exception("status failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/apps")
+def get_apps():
+    if gw is None:
+        return jsonify({"apps": []})
+    try:
+        titles = gw.getAllTitles()
+        seen, apps = set(), []
+        blocked = ("start", "taskbar", "system", "settings", "program manager")
+        for t in titles:
+            if not t or len(t) <= 1:
+                continue
+            low = t.lower()
+            if any(b in low for b in blocked):
+                continue
+            if t in seen:
+                continue
+            seen.add(t)
+            apps.append(t)
+        return jsonify({"apps": apps[:20]})
+    except Exception as e:
+        logger.exception("get_apps failed")
+        return jsonify({"apps": [], "error": str(e)})
+
+
+@app.route("/api/brightness", methods=["GET", "POST"])
+def handle_brightness():
+    if sbc is None:
+        return jsonify({"brightness": 50, "error": "brightness control unavailable"}), 200
+    try:
+        if request.method == "GET":
+            current = sbc.get_brightness()
+            brightness = int(current[0]) if current else 50
+            return jsonify({"brightness": brightness})
+        data = request.get_json(silent=True) or {}
+        brightness = max(0, min(100, int(data.get("brightness", 50))))
+        sbc.set_brightness(brightness)
+        return jsonify({"status": "success", "brightness": brightness})
+    except Exception as e:
+        logger.exception("brightness failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/clipboard", methods=["GET", "POST"])
+def handle_clipboard():
+    if win32clipboard is None:
+        msg = "clipboard sync unavailable (win32clipboard failed to import — reinstall pywin32)"
+        if request.method == "GET":
+            return jsonify({"text": "", "status": "error", "message": msg})
+        return jsonify({"status": "error", "message": msg}), 503
+    if request.method == "GET":
+        return jsonify({"text": get_clipboard_text() or "", "status": "success"})
+    data = request.get_json(silent=True) or {}
+    text = data.get("text", "")
+    ok = set_clipboard_text(text)
+    if ok:
+        return jsonify({"status": "success"})
+    return jsonify({"status": "error", "message": "could not write to PC clipboard (see controller.log)"}), 500
+
+
+@app.route("/api/screenshot")
+def handle_screenshot():
+    try:
+        from flask import send_file
+        buf = take_screenshot_bytes()
+        return send_file(buf, mimetype="image/jpeg")
+    except Exception as e:
+        logger.exception("screenshot failed")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/command", methods=["POST"])
+def execute_command():
+    try:
+        data = request.get_json(silent=True) or {}
+        command = data.get("command")
+        param = data.get("param")
+
+        if command == "lock":
+            ctypes.windll.user32.LockWorkStation()
+
+        elif command == "sleep":
+            subprocess.Popen("rundll32.exe powrprof.dll,SetSuspendState 0,1,0", shell=True)
+
+        elif command == "shutdown":
+            subprocess.Popen("shutdown /s /t 5", shell=True)
+            return jsonify({"status": "success", "message": "shutting down in 5s"})
+
+        elif command == "restart":
+            subprocess.Popen("shutdown /r /t 5", shell=True)
+            return jsonify({"status": "success", "message": "restarting in 5s"})
+
+        elif command == "cancel_shutdown":
+            subprocess.Popen("shutdown /a", shell=True)
+            return jsonify({"status": "success", "message": "pending shutdown/restart cancelled"})
+
+        elif command == "volume_up":
+            if not set_volume(min(100, get_volume() + 10)):
+                nudge_volume(1)
+
+        elif command == "volume_down":
+            if not set_volume(max(0, get_volume() - 10)):
+                nudge_volume(-1)
+
+        elif command == "volume_mute":
+            ctypes.windll.user32.keybd_event(0xAD, 0, 0, 0)
+
+        elif command == "message":
+            text = (param or data.get("message") or "").strip()
+            if not text:
+                return jsonify({"status": "error", "message": "no message text"}), 400
+            title = (data.get("title") or "System Notice").strip()
+            show_popup_message(title, text)
+            if data.get("speak"):
+                speak_message(text)
+            return jsonify({"status": "success", "message": "message sent"})
+
+        elif command == "close_app":
+            if not param:
+                return jsonify({"status": "error", "message": "no window specified"}), 400
+            if gw is None:
+                return jsonify({"status": "error", "message": "window control unavailable"}), 500
+            windows = gw.getWindowsWithTitle(param)
+            if not windows:
+                return jsonify({"status": "error", "message": "window not found"}), 404
+            try:
+                windows[0].close()
+                return jsonify({"status": "success", "message": f"closed {param}"})
+            except Exception as e:
+                logger.warning(f"close_app fallback for {param}: {e}")
+                return jsonify({"status": "error", "message": "could not close window"}), 500
+        else:
+            return jsonify({"status": "error", "message": "unknown command"}), 400
+
+        return jsonify({"status": "success"})
+    except Exception as e:
+        logger.exception("command failed")
+        return jsonify({"status": "error", "message": str(e)}), 500
