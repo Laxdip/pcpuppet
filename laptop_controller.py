@@ -182,7 +182,7 @@ def nudge_volume(direction):
 
 
 # ---------------------------------------------------------------------------
-# 4b. Custom on screen message (popup + optional text to speech)
+# 5. Custom on screen message (popup + optional text to speech)
 # ---------------------------------------------------------------------------
 MB_ICONINFORMATION = 0x40
 MB_SYSTEMMODAL = 0x1000  # keeps the box on top of whatever's currently open
@@ -225,3 +225,33 @@ def speak_message(message):
         except Exception:
             logger.exception("speak message failed")
     threading.Thread(target=_speak, daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# 6. Clipboard sync (both directions)
+# ---------------------------------------------------------------------------
+@safe(default="", log_name="get_clipboard")
+def get_clipboard_text():
+    if win32clipboard is None:
+        return ""
+    win32clipboard.OpenClipboard()
+    try:
+        try:
+            return win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+        except Exception:
+            return ""
+    finally:
+        win32clipboard.CloseClipboard()
+
+
+@safe(default=False, log_name="set_clipboard")
+def set_clipboard_text(text):
+    if win32clipboard is None:
+        return False
+    win32clipboard.OpenClipboard()
+    try:
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
+        return True
+    finally:
+        win32clipboard.CloseClipboard()
