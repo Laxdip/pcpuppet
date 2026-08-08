@@ -260,3 +260,16 @@ def set_clipboard_text(text):
 # ---------------------------------------------------------------------------
 # 7. Screenshot
 # ---------------------------------------------------------------------------
+def take_screenshot_bytes(max_width=1280):
+    from PIL import ImageGrab, Image
+    import io
+    img = ImageGrab.grab()
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), resample=Image.BILINEAR)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=65, optimize=False)
+    buf.seek(0)
+    return buf
