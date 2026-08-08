@@ -966,3 +966,59 @@ def run_server():
         app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True, use_reloader=False)
     except Exception:
         logger.exception("server crashed")
+
+
+# ---------------------------------------------------------------------------
+# 12. System tray
+# ---------------------------------------------------------------------------
+def make_icon_image():
+    from PIL import Image, ImageDraw, ImageFont
+    size = 64
+    img = Image.new("RGBA", (size, size), (5, 8, 6, 255))
+    d = ImageDraw.Draw(img)
+    d.rectangle([2, 2, size - 3, size - 3], outline=(57, 255, 136, 255), width=3)
+    try:
+        font = ImageFont.truetype("consola.ttf", 28)
+    except Exception:
+        font = ImageFont.load_default()
+    d.text((10, 16), ">_", font=font, fill=(57, 255, 136, 255))
+    return img
+
+
+def run_tray():
+    try:
+        import pystray
+    except Exception:
+        logger.warning("pystray not installed; running headless with no tray icon")
+        while True:
+            time.sleep(3600)
+        return
+
+    def open_dashboard(icon, item):
+        webbrowser.open(f"http://127.0.0.1:{PORT}/?token={AUTH_TOKEN}")
+
+    def copy_token(icon, item):
+        try:
+            import subprocess as sp
+            sp.run("clip", input=AUTH_TOKEN.encode(), shell=True)
+            icon.notify("Access token copied to clipboard")
+        except Exception:
+            pass
+
+    def restart_ngrok(icon, item):
+        threading.Thread(target=start_ngrok, daemon=True).start()
+        icon.notify("Restarting ngrok tunnel...")
+
+    def do_exit(icon, item):
+        logger.info("exit requested from tray")
+        icon.stop()
+        os._exit(0)
+
+    menu = pystray.Menu(
+        pystray.MenuItem("Open Dashboard", open_dashboard, default=True),
+        pystray.MenuItem("Copy Access Token", copy_token),
+        pystray.MenuItem("Restart ngrok Tunnel", restart_ngrok),
+        pystray.MenuItem("Exit", do_exit),
+    )
+    icon = pystray.Icon("lax", make_icon_image(), "Lax", menu)
+    icon.run()
