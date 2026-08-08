@@ -893,3 +893,8 @@ def execute_command():
     except Exception as e:
         logger.exception("command failed")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# 10. ngrok + networking helpers
+# ---------------------------------------------------------------------------
