@@ -898,3 +898,57 @@ def execute_command():
 # ---------------------------------------------------------------------------
 # 10. ngrok + networking helpers
 # ---------------------------------------------------------------------------
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def find_ngrok():
+    import shutil
+    env_path = os.environ.get("NGROK_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    which = shutil.which("ngrok")
+    if which:
+        return which
+    candidates = [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "ngrok", "ngrok.exe"),
+        os.path.join(os.environ.get("USERPROFILE", ""), "ngrok.exe"),
+        r"C:\ngrok\ngrok.exe",
+    ]
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
+@safe(default=None, log_name="start_ngrok")
+def start_ngrok():
+    ngrok_path = find_ngrok()
+    if not ngrok_path:
+        logger.warning("ngrok not found (set NGROK_PATH env var, or add it to PATH)")
+        return None
+
+    result = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq ngrok.exe"], capture_output=True, text=True
+    )
+    if "ngrok.exe" not in result.stdout:
+        subprocess.Popen(
+            [ngrok_path, "http", str(PORT)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        time.sleep(3)
+
+    response = requests.get("http://localhost:4040/api/tunnels", timeout=3)
+    data = response.json()
+    if data.get("tunnels"):
+        return data["tunnels"][0]["public_url"]
+    return None
+    
