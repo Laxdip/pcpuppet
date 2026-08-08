@@ -1027,3 +1027,60 @@ def run_tray():
 # ---------------------------------------------------------------------------
 # 13. Entry point
 # ---------------------------------------------------------------------------
+def is_running_headless():
+    """True if launched via pythonw.exe (no console attached) — i.e. via
+    launch_hidden.vbs or the Startup folder. False if launched via python.exe
+    directly (e.g. when troubleshooting in a visible terminal)."""
+    try:
+        return os.path.basename(sys.executable).lower() == "pythonw.exe"
+    except Exception:
+        return False
+
+
+def main():
+    logger.info("=" * 60)
+    logger.info("Lax starting")
+    logger.info(f"Access token: {AUTH_TOKEN}  (also saved in {CONFIG_FILE})")
+    logger.info(f"Local URL: http://{get_local_ip()}:{PORT}")
+    time.sleep(8)
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    def ngrok_startup():
+        time.sleep(1)
+        url = start_ngrok()
+        if url:
+            logger.info(f"Public URL: {url}")
+        else:
+            logger.info("No ngrok tunnel active; local network only")
+
+    threading.Thread(target=ngrok_startup, daemon=True).start()
+
+    # Give the server a moment before opening the dashboard
+    time.sleep(1.5)
+
+    # Only auto-open the browser when launched visibly via python.exe
+    # (troubleshooting). When started headlessly via pythonw.exe — i.e.
+    # from launch_hidden.vbs or Startup....stay silent.
+    if not is_running_headless():
+        try:
+            webbrowser.open(f"http://127.0.0.1:{PORT}/?token={AUTH_TOKEN}")
+        except Exception:
+            pass
+
+    # Keep the script running forever without tray
+    while True:
+        time.sleep(3600)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        logger.exception("FATAL: app crashed during startup/run")
+        try:
+            with open(os.path.join(APP_DIR, "CRASHED.txt"), "w", encoding="utf-8") as f:
+                f.write("The app crashed. See controller.log in this same folder for details.\n")
+        except Exception:
+            pass
