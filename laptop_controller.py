@@ -1,8 +1,7 @@
 """
 Lax
 =============================================
-Control your Windows laptop from your phone via a Flask web UI + Ngrok...
-
+Control your Windows laptop from your phone via a Flask web UI + ngrok...
 """
 
 import os
@@ -20,13 +19,13 @@ from logging.handlers import RotatingFileHandler
 from functools import wraps
 
 # ---------------------------------------------------------------------------
-# 0. Logging...set this up first, before touching the console at all...so that absolutely anything that goes wrong gets written to a file we can read afterwards. Nothing should ever be
-#    able to fail silently.
+# 1. Logging
 # ---------------------------------------------------------------------------
 APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "LaptopController")
 os.makedirs(APP_DIR, exist_ok=True)
 LOG_FILE = os.path.join(APP_DIR, "controller.log")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
+SESSION_FILE = os.path.join(APP_DIR, "sessions.json")
 
 logger = logging.getLogger("laptop_controller")
 logger.setLevel(logging.INFO)
@@ -35,9 +34,6 @@ _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s
 logger.addHandler(_handler)
 logger.info("---- process starting (pid=%s) ----", os.getpid())
 
-# ---------------------------------------------------------------------------
-# 1. When launched with python.exe for troubleshooting, you will now see real errors.
-# ---------------------------------------------------------------------------
 try:
     import ctypes
 except Exception:
@@ -45,7 +41,6 @@ except Exception:
 
 
 def safe(default=None, log_name="operation"):
-    """Decorator: never let a route/helper raise past this point."""
     def deco(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -59,7 +54,7 @@ def safe(default=None, log_name="operation"):
 
 
 # ---------------------------------------------------------------------------
-# 2. Config / auth token....a random token is generated on first run and stored locally.
+# 2. Config / auth token
 # ---------------------------------------------------------------------------
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -70,15 +65,95 @@ def load_config():
                     return cfg
         except Exception:
             pass
-    cfg = {"token": secrets.token_hex(16), "port": 5000}
+    cfg = {"token": secrets.token_hex(16), "port": 5000, "security_password": secrets.token_hex(8)}
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
     return cfg
 
 
+def save_config():
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(CONFIG, f, indent=2)
+        return True
+    except Exception:
+        logger.exception("failed to save config")
+        return False
+
+
 CONFIG = load_config()
 AUTH_TOKEN = CONFIG["token"]
 PORT = CONFIG.get("port", 5000)
+SECURITY_PASSWORD = CONFIG.get("security_password", secrets.token_hex(8))
+
+
+# ---------------------------------------------------------------------------
+# 2b. Device sessions 
+# ---------------------------------------------------------------------------
+ACTIVE_SESSIONS = {}
+
+def load_sessions_from_disk():
+    global ACTIVE_SESSIONS
+    if os.path.exists(SESSION_FILE):
+        try:
+            with open(SESSION_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    ACTIVE_SESSIONS = data
+                    logger.info(f"Loaded {len(ACTIVE_SESSIONS)} saved sessions")
+                    return
+        except Exception:
+            pass
+    ACTIVE_SESSIONS = {}
+
+def save_sessions_to_disk():
+    try:
+        with open(SESSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(ACTIVE_SESSIONS, f, indent=2)
+    except Exception:
+        pass
+
+load_sessions_from_disk()
+
+def create_session(label):
+    secret = secrets.token_hex(24)
+    handle = secrets.token_hex(4)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    ACTIVE_SESSIONS[secret] = {
+        "handle": handle,
+        "label": (label or "unknown device")[:80],
+        "created": now,
+        "last_seen": now,
+    }
+    save_sessions_to_disk()
+    return secret, handle
+
+def touch_session(secret):
+    s = ACTIVE_SESSIONS.get(secret)
+    if s:
+        s["last_seen"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+def revoke_by_handle(handle):
+    for secret, s in list(ACTIVE_SESSIONS.items()):
+        if s["handle"] == handle:
+            del ACTIVE_SESSIONS[secret]
+            save_sessions_to_disk()
+            return True
+    return False
+
+def list_sessions_view(caller_secret):
+    out = []
+    for secret, s in ACTIVE_SESSIONS.items():
+        out.append({
+            "handle": s["handle"],
+            "label": s["label"],
+            "created": s["created"],
+            "last_seen": s["last_seen"],
+            "is_you": secret == caller_secret,
+        })
+    out.sort(key=lambda x: x["last_seen"], reverse=True)
+    return out
+
 
 # ---------------------------------------------------------------------------
 # 3. Third-party imports
@@ -89,11 +164,7 @@ try:
     import psutil
     import requests
 except ImportError as e:
-    msg = (
-        f"REQUIRED PACKAGE MISSING: {e}\n\n"
-        "Run setup.bat again (double-click it) to install dependencies, "
-        "then try starting the app again.\n"
-    )
+    msg = f"REQUIRED PACKAGE MISSING: {e}\n\nRun setup.bat again."
     print(msg)
     logger.exception("required package missing")
     try:
@@ -107,17 +178,17 @@ try:
     import screen_brightness_control as sbc
 except Exception:
     sbc = None
-    logger.warning("screen_brightness_control unavailable; brightness disabled")
+    logger.warning("screen_brightness_control unavailable")
 
 try:
     import pygetwindow as gw
 except Exception:
     gw = None
-    logger.warning("pygetwindow unavailable; app list/close disabled")
+    logger.warning("pygetwindow unavailable")
 
 try:
-    import win32gui  # noqa: F401
-    import win32con  # noqa: F401
+    import win32gui
+    import win32con
 except Exception:
     pass
 
@@ -125,7 +196,7 @@ try:
     import win32clipboard
 except Exception:
     win32clipboard = None
-    logger.warning("win32clipboard unavailable; clipboard push disabled")
+    logger.warning("win32clipboard unavailable")
 
 app = Flask(__name__)
 CORS(app)
@@ -137,22 +208,60 @@ log_werkzeug.setLevel(logging.WARNING)
 def check_auth():
     if request.path in ("/", "/favicon.ico"):
         return None
-    if request.path.startswith("/api/login"):
+    if request.path == "/api/login":
+        return None
+    if request.path == "/api/security/unlock":
         return None
     supplied = request.headers.get("X-Auth-Token") or request.args.get("token")
-    if supplied != AUTH_TOKEN:
+    if supplied not in ACTIVE_SESSIONS:
         return jsonify({"status": "error", "message": "unauthorized"}), 401
+    touch_session(supplied)
+    g.session_secret = supplied
 
 
-# ---------------------------------------------------------------------------
-# 4. Volume helper
-# ---------------------------------------------------------------------------
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+    password = data.get("password", "")
+    label = data.get("label", "")
+    if not secrets.compare_digest(password, AUTH_TOKEN):
+        return jsonify({"status": "error", "message": "invalid token"}), 401
+    secret, handle = create_session(label)
+    logger.info(f"new session: handle={handle} label={label!r}")
+    return jsonify({"status": "success", "session": secret, "handle": handle})
+
+
+@app.route("/api/sessions", methods=["GET"])
+def get_sessions():
+    return jsonify({"status": "success", "sessions": list_sessions_view(g.get("session_secret"))})
+
+
+@app.route("/api/sessions/revoke", methods=["POST"])
+def revoke_session():
+    data = request.get_json(silent=True) or {}
+    handle = (data.get("handle") or "").strip()
+    if not handle:
+        return jsonify({"status": "error", "message": "handle required"}), 400
+    ok = revoke_by_handle(handle)
+    return jsonify({"status": "success" if ok else "error", "message": None if ok else "session not found"})
+
+
+# ===== SECURITY PASSWORD ENDPOINT =====
+@app.route("/api/security/unlock", methods=["POST"])
+def security_unlock():
+    data = request.get_json(silent=True) or {}
+    password = data.get("password", "")
+    if secrets.compare_digest(password, SECURITY_PASSWORD):
+        return jsonify({"status": "success", "message": "unlocked"})
+    return jsonify({"status": "error", "message": "wrong password"}), 401
+
+
+# ===== VOLUME HELPERS =====
 @safe(default=False, log_name="set_volume")
 def set_volume(level):
     from ctypes import cast, POINTER
     from comtypes import CLSCTX_ALL
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-
     devices = AudioUtilities.GetSpeakers()
     interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
     volume = cast(interface, POINTER(IAudioEndpointVolume))
@@ -165,7 +274,6 @@ def get_volume():
     from ctypes import cast, POINTER
     from comtypes import CLSCTX_ALL
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-
     devices = AudioUtilities.GetSpeakers()
     interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
     volume = cast(interface, POINTER(IAudioEndpointVolume))
@@ -173,7 +281,6 @@ def get_volume():
 
 
 def nudge_volume(direction):
-    """Fallback for machines without pycaw: simulate media keys."""
     VK_VOLUME_UP, VK_VOLUME_DOWN = 0xAF, 0xAE
     key = VK_VOLUME_UP if direction > 0 else VK_VOLUME_DOWN
     for _ in range(5):
@@ -181,17 +288,11 @@ def nudge_volume(direction):
         time.sleep(0.05)
 
 
-# ---------------------------------------------------------------------------
-# 5. Custom on screen message (popup + optional text to speech)
-# ---------------------------------------------------------------------------
+# ===== MESSAGE =====
 MB_ICONINFORMATION = 0x40
-MB_SYSTEMMODAL = 0x1000  # keeps the box on top of whatever's currently open
-
+MB_SYSTEMMODAL = 0x1000
 
 def show_popup_message(title, message):
-    """Show a Windows message box on the physical screen. Runs in its own
-    thread since MessageBoxW blocks until someone clicks OK, and we don't
-    want that to block the Flask request."""
     def _show():
         try:
             ctypes.windll.user32.MessageBoxW(
@@ -204,10 +305,6 @@ def show_popup_message(title, message):
 
 
 def speak_message(message):
-    """Read the message aloud using Windows' built-in text-to-speech
-    (System.Speech via PowerShell). Passed through an environment variable
-    rather than embedded in the command string, so odd characters/quotes in
-    the message can't break the PowerShell invocation."""
     def _speak():
         try:
             env = os.environ.copy()
@@ -227,9 +324,7 @@ def speak_message(message):
     threading.Thread(target=_speak, daemon=True).start()
 
 
-# ---------------------------------------------------------------------------
-# 6. Clipboard sync (both directions)
-# ---------------------------------------------------------------------------
+# ===== CLIPBOARD =====
 @safe(default="", log_name="get_clipboard")
 def get_clipboard_text():
     if win32clipboard is None:
@@ -257,9 +352,7 @@ def set_clipboard_text(text):
         win32clipboard.CloseClipboard()
 
 
-# ---------------------------------------------------------------------------
-# 7. Screenshot
-# ---------------------------------------------------------------------------
+# ===== SCREENSHOT - FAST =====
 def take_screenshot_bytes(max_width=1280):
     from PIL import ImageGrab, Image
     import io
@@ -268,15 +361,15 @@ def take_screenshot_bytes(max_width=1280):
         img = img.convert("RGB")
     if img.width > max_width:
         ratio = max_width / img.width
-        img = img.resize((max_width, int(img.height * ratio)), resample=Image.BILINEAR)
+        img = img.resize((max_width, int(img.height * ratio)), Image.NEAREST)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=65, optimize=False)
+    img.save(buf, format="JPEG", quality=55, optimize=True, progressive=False)
     buf.seek(0)
     return buf
 
 
 # ---------------------------------------------------------------------------
-# 8. HTML
+# HTML TEMPLATE
 # ---------------------------------------------------------------------------
 HTML_TEMPLATE = r"""
 <!DOCTYPE html>
@@ -287,14 +380,50 @@ HTML_TEMPLATE = r"""
 <title>root@lax:~#</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap');
+  
   :root{
-    --bg:#080b10; --panel:#0e131b; --panel2:#0b0f15; --line:#1c2735;
-    --arch:#1793d1; --arch-soft:#5ec8f8; --green:#50fa7b; --green-soft:#8dffb0;
-    --magenta:#ff5fa8; --amber:#ffb86c; --red:#ff5f56;
-    --text:#cfd9e6; --dim:#54677d; --dim2:#3a4a5c;
+    --bg:#080b10;
+    --panel:#0e131b;
+    --panel2:#0b0f15;
+    --line:#1c2735;
+    --arch:#1793d1;
+    --arch-soft:#5ec8f8;
+    --green:#50fa7b;
+    --green-soft:#8dffb0;
+    --magenta:#ff5fa8;
+    --amber:#ffb86c;
+    --red:#ff5f56;
+    --text:#cfd9e6;
+    --dim:#54677d;
+    --dim2:#3a4a5c;
+    --brand: #66d9ef;
   }
+  
+  .theme-cyan{ --arch:#1793d1; --arch-soft:#5ec8f8; --green:#50fa7b; --green-soft:#8dffb0; --magenta:#ff5fa8; --amber:#ffb86c; --red:#ff5f56; --text:#cfd9e6; --dim:#54677d; --dim2:#3a4a5c; --line:#1c2735; --bg:#080b10; --panel:#0e131b; --panel2:#0b0f15; --brand: #66d9ef; }
+  .theme-green{ --arch:#50fa7b; --arch-soft:#8dffb0; --green:#50fa7b; --green-soft:#8dffb0; --magenta:#ff5fa8; --amber:#ffb86c; --red:#ff5f56; --text:#cfd9e6; --dim:#3a5a3a; --dim2:#2a4a2a; --line:#2a4a2a; --bg:#0a1008; --panel:#0e180e; --panel2:#0a120a; --brand: #50fa7b; }
+  .theme-gold{ --arch:#ffb86c; --arch-soft:#ffd93d; --green:#ffb86c; --green-soft:#ffd93d; --magenta:#ff5fa8; --amber:#ffb86c; --red:#ff5f56; --text:#f5e6d3; --dim:#7a5a3a; --dim2:#5a3a2a; --line:#4a3a2a; --bg:#100a08; --panel:#1a120e; --panel2:#120e0a; --brand: #ffd93d; }
+  .theme-red{ --arch:#ff5f56; --arch-soft:#ff8a82; --green:#50fa7b; --green-soft:#8dffb0; --magenta:#ff5fa8; --amber:#ffb86c; --red:#ff5f56; --text:#f5d3d3; --dim:#7a3a3a; --dim2:#5a2a2a; --line:#4a2a2a; --bg:#100808; --panel:#1a0e0e; --panel2:#120a0a; --brand: #ff8a82; }
+  .theme-magenta{ --arch:#ff5fa8; --arch-soft:#ff8ec8; --green:#50fa7b; --green-soft:#8dffb0; --magenta:#ff5fa8; --amber:#ffb86c; --red:#ff5f56; --text:#f5d3e6; --dim:#7a3a5a; --dim2:#5a2a3a; --line:#4a2a3a; --bg:#10080c; --panel:#1a0e14; --panel2:#120a0e; --brand: #ff8ec8; }
+  .theme-purple{ --arch:#ae81ff; --arch-soft:#d4b8ff; --green:#50fa7b; --green-soft:#8dffb0; --magenta:#ff5fa8; --amber:#ffb86c; --red:#ff5f56; --text:#e6d3f5; --dim:#5a3a7a; --dim2:#3a2a5a; --line:#3a2a4a; --bg:#0a0810; --panel:#120e1a; --panel2:#0e0a14; --brand: #d4b8ff; }
+  .theme-blue{ --arch:#6cb4ff; --arch-soft:#a8d4ff; --green:#50fa7b; --green-soft:#8dffb0; --magenta:#ff5fa8; --amber:#ffb86c; --red:#ff5f56; --text:#d3e5f5; --dim:#3a5a7a; --dim2:#2a3a5a; --line:#2a3a4a; --bg:#080a10; --panel:#0e121a; --panel2:#0a0e14; --brand: #a8d4ff; }
+  
+  *, *::before, *::after {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    -webkit-touch-callout: none !important;
+  }
+  
+  input, textarea, input::selection, textarea::selection {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+  }
+  
   *{box-sizing:border-box; margin:0; padding:0;}
-  html,body{background:var(--bg); color:var(--text); font-family:'JetBrains Mono',monospace;}
+  html,body{background:var(--bg); color:var(--text); font-family:'JetBrains Mono',monospace; -webkit-tap-highlight-color:transparent;}
   body{
     min-height:100vh; padding:16px 14px 40px;
     background-image:
@@ -306,26 +435,33 @@ HTML_TEMPLATE = r"""
     content:""; position:fixed; inset:0; pointer-events:none; z-index:5;
     background:repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0px, rgba(0,0,0,0.16) 1px, transparent 1px, transparent 3px);
     mix-blend-mode:overlay; opacity:.3;
+    pointer-events:none;
   }
   .wrap{max-width:540px; margin:0 auto; position:relative; z-index:6;}
-  .bootline{font-size:11px; color:var(--dim); white-space:pre; margin-bottom:10px; line-height:1.5;}
+  .bootline{font-size:11px; color:var(--dim); white-space:pre; margin-bottom:0; line-height:1.5;}
   ::selection{background:var(--arch); color:#000;}
   .muted{color:var(--dim); font-size:11px;}
 
-  /* ---------- lock screen ---------- */
-  .lock-screen{position:fixed; inset:0; background:var(--bg); z-index:100; display:flex; align-items:center; justify-content:center; padding:20px;}
-  .lock-box{border:1px solid var(--arch); border-radius:2px; padding:24px; width:100%; max-width:340px; background:var(--panel); box-shadow:0 0 30px rgba(23,147,209,0.15);}
+  .lock-screen{
+    position:fixed; inset:0; background:var(--bg); z-index:1000; 
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .lock-screen.active{ display:flex !important; visibility:visible !important; opacity:1 !important; }
+  .lock-screen.hidden{ display:none !important; }
+  
+  .lock-box{border:1px solid var(--arch); border-radius:2px; padding:24px; width:100%; max-width:340px; background:var(--panel); box-shadow:0 0 30px rgba(94,200,248,0.13);}
   .lock-box input{
     width:100%; background:#050810; border:1px solid var(--line); color:var(--green); padding:10px;
     font-family:inherit; font-size:14px; border-radius:2px; margin:10px 0;
   }
+  .lock-box input:focus{outline:none; border-color:var(--arch);}
   .lock-box button{
     width:100%; background:rgba(23,147,209,0.12); border:1px solid var(--arch); color:var(--arch-soft);
     padding:10px; border-radius:2px; font-family:inherit; font-weight:700; cursor:pointer; letter-spacing:0.5px;
   }
   .lock-box button:hover{background:rgba(23,147,209,0.22);}
+  .lock-box button:disabled{opacity:0.5; cursor:not-allowed;}
 
-  /* ---------- neofetch header (signature element) ---------- */
   .neofetch{
     display:flex; gap:18px; align-items:flex-start; border:1px solid var(--line);
     border-radius:2px; padding:16px; background:var(--panel);
@@ -333,7 +469,7 @@ HTML_TEMPLATE = r"""
   }
   .arch-logo{
     font-size:9px; line-height:1.15; color:var(--arch); white-space:pre; font-weight:700;
-    text-shadow:0 0 6px rgba(23,147,209,0.5); flex-shrink:0;
+    text-shadow:0 0 6px rgba(23,147,209,0.53); flex-shrink:0;
   }
   .nf-info{flex:1; min-width:0;}
   .nf-title{font-size:16px; font-weight:800; letter-spacing:0.5px; margin-bottom:2px;}
@@ -343,10 +479,27 @@ HTML_TEMPLATE = r"""
   .nf-row{display:flex; gap:6px; font-size:11.5px; margin-bottom:3px; align-items:baseline; flex-wrap:wrap;}
   .nf-row .k{color:var(--green-soft); font-weight:700; min-width:64px; flex-shrink:0;}
   .nf-row .v{color:var(--text); word-break:break-word;}
-  .nf-swatches{display:flex; gap:3px; margin-top:10px;}
-  .nf-swatches span{width:14px; height:8px; border-radius:1px; display:inline-block;}
+  
+  .nf-swatches{ display:flex; gap:3px; margin-top:10px; cursor:pointer; -webkit-tap-highlight-color: transparent !important; }
+  .nf-swatches span{
+    width:16px; height:10px; border-radius:1px; display:inline-block;
+    border: 1px solid transparent; transition: all 0.1s; cursor:pointer;
+    -webkit-tap-highlight-color: transparent !important; outline: none !important;
+  }
+  .nf-swatches span:hover{ transform: scale(1.2); border-color: var(--text); box-shadow: 0 0 12px rgba(23,147,209,0.27); }
+  .nf-swatches span.active{ border-color: var(--text); box-shadow: 0 0 12px rgba(23,147,209,0.4); transform: scale(1.1); }
+  .nf-swatches span:focus { outline: none !important; }
 
-  /* ---------- window-manager style panels ---------- */
+  .brand {
+    padding: 4px 0 4px 0; margin: 2px 0 10px 0; border-bottom: 1px solid var(--line);
+    position: relative; min-height: 32px;
+  }
+  .brand .name {
+    font-size: 22px; font-weight: 800; letter-spacing: 4px; color: var(--brand);
+    font-family: 'JetBrains Mono', monospace; display: inline-block; min-width: 180px;
+    text-shadow: 0 0 10px rgba(102,217,239,0.27);
+  }
+
   .winbar{
     display:flex; align-items:center; justify-content:space-between; padding:7px 10px;
     border:1px solid var(--line); border-bottom:none; border-radius:2px 2px 0 0;
@@ -373,17 +526,18 @@ HTML_TEMPLATE = r"""
   .btn{
     background:transparent; border:1px solid var(--line); color:var(--text);
     padding:12px 10px; border-radius:2px; font-family:inherit; font-size:12.5px; font-weight:600;
-    cursor:pointer; text-align:left; transition:.12s; position:relative;
+    cursor:pointer; text-align:left; transition: all 0.1s; position:relative;
+    -webkit-tap-highlight-color: transparent !important; outline: none !important;
   }
   .btn::before{content:"$ "; color:var(--dim);}
   .btn:active{transform:scale(.97);}
-  .btn:hover{border-color:var(--arch); box-shadow:0 0 10px rgba(23,147,209,0.18); color:var(--arch-soft);}
+  .btn:hover{border-color:var(--arch); box-shadow:0 0 10px rgba(23,147,209,0.2); color:var(--arch-soft);}
   .btn-danger{border-color:#4a1f1f; color:#ff9a9a;}
-  .btn-danger:hover{border-color:var(--red); box-shadow:0 0 10px rgba(255,95,86,0.2); color:#ff9a9a;}
+  .btn-danger:hover{border-color:var(--red); box-shadow:0 0 10px rgba(255,95,86,0.27); color:#ff9a9a;}
   .btn-warn{border-color:#4a3d1f; color:var(--amber);}
-  .btn-warn:hover{border-color:var(--amber); box-shadow:0 0 10px rgba(255,184,108,0.2);}
+  .btn-warn:hover{border-color:var(--amber); box-shadow:0 0 10px rgba(255,184,108,0.27);}
   .btn-magenta{border-color:#4a1f3d; color:#ff9ecb;}
-  .btn-magenta:hover{border-color:var(--magenta); box-shadow:0 0 10px rgba(255,95,168,0.2);}
+  .btn-magenta:hover{border-color:var(--magenta); box-shadow:0 0 10px rgba(255,95,168,0.27);}
   .btn-full{grid-column:1/-1;}
 
   .slider-box{border:1px solid var(--line); border-radius:2px; padding:10px 12px; margin-top:8px; background:rgba(23,147,209,0.02);}
@@ -407,39 +561,61 @@ HTML_TEMPLATE = r"""
     border-radius:2px; padding:4px 8px; cursor:pointer; font-family:inherit; font-size:11px;
   }
 
+  .sesslist{max-height:220px; overflow-y:auto; margin-top:8px;}
+  .sessitem{
+    border:1px solid var(--line); border-radius:2px; padding:8px 10px; margin-bottom:6px; font-size:11.5px;
+  }
+  .sessitem.you{border-color:var(--green); background:rgba(80,250,123,0.04);}
+  .sessitem .row1{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+  .sessitem .lbl{color:var(--text); font-weight:600;}
+  .sessitem .lbl .tag{color:var(--green-soft); font-size:9.5px; margin-left:6px; border:1px solid var(--green); border-radius:2px; padding:1px 5px;}
+  .sessitem .meta{color:var(--dim); font-size:10px; margin-top:4px;}
+  .sessitem button{
+    background:rgba(255,95,86,0.1); border:1px solid #4a1f1f; color:#ff9a9a;
+    border-radius:2px; padding:4px 8px; cursor:pointer; font-family:inherit; font-size:10.5px; flex-shrink:0;
+  }
+
   .urlbox{border:1px dashed var(--arch-soft); border-radius:2px; padding:10px 12px; font-size:11.5px; word-break:break-all; margin-top:10px;}
 
   .toast{
     position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
     background:#0a1620; border:1px solid var(--arch); color:var(--arch-soft);
-    padding:10px 16px; border-radius:2px; font-size:12px; display:none; z-index:50;
-    box-shadow:0 0 20px rgba(23,147,209,0.25);
+    padding:10px 16px; border-radius:2px; font-size:12px; display:none; z-index:9999;
+    box-shadow:0 0 20px rgba(23,147,209,0.27);
   }
   .toast.show{display:block; animation:up .25s ease;}
   @keyframes up{from{opacity:0; transform:translate(-50%,10px);} to{opacity:1; transform:translate(-50%,0);}}
 
   .eye-btn{
     background:none; border:1px solid var(--line); color:var(--dim); font-size:10px;
-    padding:2px 7px; border-radius:2px; cursor:pointer; font-family:inherit; letter-spacing:0.5px; transition:.15s;
+    padding:2px 7px; border-radius:2px; cursor:pointer; font-family:inherit; letter-spacing:0.5px;
+    -webkit-tap-highlight-color: transparent !important; outline: none !important;
   }
   .eye-btn:hover{color:var(--arch-soft); border-color:var(--arch);}
   .prompt-tail{color:var(--dim); font-size:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px;}
-  .cur{display:inline-block; width:8px; height:14px; background:var(--green); vertical-align:middle; animation:blink 1s steps(1) infinite;}
-  @keyframes blink{50%{opacity:0;}}
+  
+  #mainUI { display: none; }
+  #mainUI.visible { display: block; }
 </style>
 </head>
 <body class="crt">
-<div id="lockScreen" class="lock-screen">
+
+<div id="lockScreen" class="lock-screen active">
   <div class="lock-box">
     <div class="bootline">[lax@lax ~]$ sudo authenticate --token</div>
     <div class="muted" style="margin-bottom:8px;">Enter the access token printed in controller.log on first run.</div>
-    <input id="tokenInput" type="password" placeholder="access token" autocomplete="off">
-    <button onclick="doLogin()">[ unlock session ]</button>
+    <input id="tokenInput" type="password" placeholder="access token" autocomplete="off" onkeydown="if(event.key==='Enter')doLogin()">
+    <button id="loginBtn" onclick="doLogin()">[ unlock session ]</button>
+    <div id="loginError" style="color:var(--red); font-size:11px; margin-top:8px; min-height:18px;"></div>
   </div>
 </div>
 
-<div class="wrap" id="mainUI" style="display:none;">
+<div class="wrap" id="mainUI">
   <div class="bootline" id="bootline"></div>
+
+  <div class="brand">
+    <span class="name" id="glitchName">pcpuppet</span>
+  </div>
 
   <div class="neofetch">
     <pre class="arch-logo">      /\
@@ -458,18 +634,21 @@ HTML_TEMPLATE = r"""
       <div class="nf-row"><span class="k">cpu</span><span class="v" id="cpuUsage">--</span></div>
       <div class="nf-row"><span class="k">memory</span><span class="v" id="memoryUsage">--</span></div>
       <div class="nf-row"><span class="k">battery</span><span class="v" id="batteryStatus">--</span></div>
-      <div class="nf-swatches">
-        <span style="background:#ff5f56"></span><span style="background:#ffb86c"></span>
-        <span style="background:#50fa7b"></span><span style="background:#1793d1"></span>
-        <span style="background:#5ec8f8"></span><span style="background:#ff5fa8"></span>
-        <span style="background:#cfd9e6"></span><span style="background:#54677d"></span>
+      <div class="nf-swatches" id="themeSwatches">
+        <span style="background:#66d9ef" data-theme="cyan" onclick="setTheme('cyan')" class="active"></span>
+        <span style="background:#50fa7b" data-theme="green" onclick="setTheme('green')"></span>
+        <span style="background:#ffd93d" data-theme="gold" onclick="setTheme('gold')"></span>
+        <span style="background:#ff8a82" data-theme="red" onclick="setTheme('red')"></span>
+        <span style="background:#ff8ec8" data-theme="magenta" onclick="setTheme('magenta')"></span>
+        <span style="background:#d4b8ff" data-theme="purple" onclick="setTheme('purple')"></span>
+        <span style="background:#a8d4ff" data-theme="blue" onclick="setTheme('blue')"></span>
       </div>
     </div>
   </div>
 
   <div class="urlbox" id="publicUrl">••••••••••••••••••••••••••••••••••</div>
 
-  <div class="prompt-tail">[lax@lax ~]$ tail -f /var/log/session <span class="cur"></span></div>
+  <div class="prompt-tail">[lax@lax ~]$ tail -f /var/log/session</div>
 
   <div style="margin-top:16px;">
 
@@ -533,6 +712,30 @@ HTML_TEMPLATE = r"""
     <div class="applist" id="appList"><div class="muted">run refresh to list open windows</div></div>
   </div>
 
+  <!-- ===== SECURITY SECTION WITH PASSWORD ===== -->
+    <div class="winbar c-magenta"><span class="path">security</span><div class="wdots"><span style="background:var(--red)"></span><span style="background:var(--amber)"></span><span style="background:var(--green)"></span></div></div>
+  <div class="win c-magenta">
+    <div id="securityLockText" class="muted" style="margin-bottom:8px;">🖕 security section locked....enter password to access</div>
+    
+    <div id="securityLockBox" style="display:flex; gap:6px; margin-bottom:10px;">
+      <input id="securityPassword" type="password" placeholder="security password" style="flex:1; margin:0;" onkeydown="if(event.key==='Enter')unlockSecurity()">
+      <button class="btn" onclick="unlockSecurity()" style="padding:8px 14px; flex-shrink:0;">unlock</button>
+    </div>
+    <div id="securityError" style="color:var(--red); font-size:10px; min-height:16px; margin-bottom:6px;"></div>
+    
+    <div id="securityContent" style="display:none; border-top:1px solid var(--line); padding-top:10px;">
+      <div class="muted" style="margin-bottom:6px;">change authentication token or manage logged-in devices</div>
+      <input id="newTokenInput" type="text" placeholder="new token (min 4 characters)">
+      <div class="grid2">
+        <button class="btn" onclick="changeToken()">rotate token</button>
+        <button class="btn btn-danger" onclick="logoutSession()">end this session</button>
+      </div>
+      <div class="muted" style="margin:10px 0 4px;">devices currently logged in:</div>
+      <button class="btn btn-full" onclick="loadSessions()" style="margin-bottom:4px;">refresh device list</button>
+      <div class="sesslist" id="sessList"><div class="muted">tap refresh to load</div></div>
+    </div>
+  </div>
+
   <div class="muted" style="margin-top:6px; text-align:center;">[lax@lax ~]$ session auto-refreshes · ctrl+d to disconnect</div>
   </div>
 </div>
@@ -540,9 +743,183 @@ HTML_TEMPLATE = r"""
 <div class="toast" id="notification"></div>
 
 <script>
-let TOKEN = localStorage.getItem('lc_token') || '';
+const glitchChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?/~`';
+const targetText = 'pcpuppet';
+const glitchEl = document.getElementById('glitchName');
+let glitchInterval = null;
+let glitchTimeout = null;
+
+function casinoGlitch() {
+  if (glitchTimeout) clearTimeout(glitchTimeout);
+  const length = targetText.length;
+  let progress = 0;
+  const steps = 12;
+  function doGlitchStep() {
+    if (progress >= steps) { glitchEl.textContent = targetText; return; }
+    let result = '';
+    const charsToChange = Math.max(1, Math.floor((1 - progress/steps) * length));
+    const startPos = Math.floor(Math.random() * (length - charsToChange + 1));
+    for (let i = 0; i < length; i++) {
+      if (i >= startPos && i < startPos + charsToChange) {
+        result += glitchChars[Math.floor(Math.random() * glitchChars.length)];
+      } else { result += targetText[i]; }
+    }
+    glitchEl.textContent = result;
+    progress++;
+    const delay = 50 + (progress / steps) * 30;
+    glitchTimeout = setTimeout(doGlitchStep, delay);
+  }
+  doGlitchStep();
+}
+
+function startGlitchLoop() {
+  if (glitchInterval) clearInterval(glitchInterval);
+  glitchInterval = setInterval(casinoGlitch, 3500);
+  setTimeout(casinoGlitch, 300);
+}
+
+function setTheme(theme) {
+  const body = document.body;
+  const classList = body.className.split(' ');
+  const newClasses = classList.filter(c => !c.startsWith('theme-'));
+  newClasses.push('theme-' + theme);
+  body.className = newClasses.join(' ');
+  const swatches = document.querySelectorAll('.nf-swatches span');
+  for (let i = 0; i < swatches.length; i++) {
+    const el = swatches[i];
+    if (el.dataset.theme === theme) { el.classList.add('active'); } else { el.classList.remove('active'); }
+  }
+  localStorage.setItem('lax_theme', theme);
+  void body.offsetHeight;
+}
+const savedTheme = localStorage.getItem('lax_theme') || 'cyan';
+setTheme(savedTheme);
+
+// ============================================================
+// SECURITY SECTION PASSWORD PROTECTION
+// ============================================================
+function unlockSecurity() {
+    const input = document.getElementById('securityPassword');
+    const error = document.getElementById('securityError');
+    const content = document.getElementById('securityContent');
+    const lockBox = document.getElementById('securityLockBox');
+    const lockText = document.getElementById('securityLockText');
+    const password = input.value.trim();
+    
+    if (!password) {
+        error.textContent = '[err] enter password';
+        return;
+    }
+    
+    api('/api/security/unlock', {
+        method: 'POST',
+        body: JSON.stringify({password: password})
+    })
+    .then(data => {
+        if (data.status === 'success') {
+            content.style.display = 'block';
+            lockBox.style.display = 'none';
+            lockText.style.display = 'none';
+            error.textContent = '';
+            input.value = '';
+            showNotification('[ok] security section unlocked');
+            loadSessions();
+        } else {
+            error.textContent = '[err] wrong password';
+            input.value = '';
+            input.focus();
+            showNotification('[err] wrong security password');
+        }
+    })
+    .catch(() => {
+        error.textContent = '[err] connection failed';
+        showNotification('[err] could not verify password');
+    });
+}
+
+// Allow Enter key on password field
+document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('securityPassword');
+    if (input) {
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') unlockSecurity();
+        });
+    }
+});
+
+function showLock() {
+  const lockScreen = document.getElementById('lockScreen');
+  const mainUI = document.getElementById('mainUI');
+  const loginBtn = document.getElementById('loginBtn');
+  const errorEl = document.getElementById('loginError');
+  if (errorEl) errorEl.textContent = '';
+  if (loginBtn) loginBtn.disabled = false;
+  document.getElementById('tokenInput').value = '';
+  lockScreen.classList.remove('hidden');
+  lockScreen.classList.add('active');
+  mainUI.classList.remove('visible');
+  mainUI.style.display = 'none';
+  if (glitchInterval) clearInterval(glitchInterval);
+  if (glitchTimeout) clearTimeout(glitchTimeout);
+}
+
+function hideLock() {
+  const lockScreen = document.getElementById('lockScreen');
+  const mainUI = document.getElementById('mainUI');
+  lockScreen.classList.add('hidden');
+  lockScreen.classList.remove('active');
+  mainUI.style.display = 'block';
+  mainUI.classList.add('visible');
+  startGlitchLoop();
+}
+
+// ---------- SESSION-BASED AUTH ----------
+let TOKEN = localStorage.getItem('lc_session') || '';
+let HANDLE = localStorage.getItem('lc_handle') || '';
 const urlToken = new URLSearchParams(window.location.search).get('token');
-if (urlToken) { TOKEN = urlToken; localStorage.setItem('lc_token', urlToken); }
+
+function deviceLabel(){
+  const p = navigator.platform || 'device';
+  const ua = navigator.userAgent || '';
+  let browser = 'browser';
+  if (ua.includes('Chrome')) browser = 'Chrome';
+  else if (ua.includes('Firefox')) browser = 'Firefox';
+  else if (ua.includes('Safari')) browser = 'Safari';
+  return `${p} · ${browser}`;
+}
+
+function doLogin() {
+  const t = document.getElementById('tokenInput').value.trim();
+  const errorEl = document.getElementById('loginError');
+  const loginBtn = document.getElementById('loginBtn');
+  if (!t) { if (errorEl) errorEl.textContent = '[err] token cannot be empty'; return; }
+  if (loginBtn) loginBtn.disabled = true;
+  if (errorEl) errorEl.textContent = '';
+
+  fetch('/api/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json', 'ngrok-skip-browser-warning':'true'},
+    body: JSON.stringify({password: t, label: deviceLabel()})
+  })
+    .then(r => r.json().then(d => ({status: r.status, body: d})))
+    .then(({status, body}) => {
+      if (status !== 200 || body.status !== 'success') {
+        if (errorEl) errorEl.textContent = '[err] invalid token';
+        if (loginBtn) loginBtn.disabled = false;
+        return;
+      }
+      TOKEN = body.session;
+      HANDLE = body.handle;
+      localStorage.setItem('lc_session', TOKEN);
+      localStorage.setItem('lc_handle', HANDLE);
+      hideLock();
+      bootSequence();
+    })
+    .catch(() => {
+      if (errorEl) errorEl.textContent = '[err] connection refused';
+      if (loginBtn) loginBtn.disabled = false;
+    });
+}
 
 function api(path, opts={}) {
   opts.headers = Object.assign({'X-Auth-Token': TOKEN, 'Content-Type':'application/json', 'ngrok-skip-browser-warning':'true'}, opts.headers||{});
@@ -552,19 +929,14 @@ function api(path, opts={}) {
   });
 }
 
-function showLock(){
-  document.getElementById('lockScreen').style.display = 'flex';
-  document.getElementById('mainUI').style.display = 'none';
-}
-
-function doLogin(){
-  const t = document.getElementById('tokenInput').value.trim();
-  if (!t) return;
-  TOKEN = t;
-  localStorage.setItem('lc_token', t);
-  document.getElementById('lockScreen').style.display = 'none';
-  document.getElementById('mainUI').style.display = 'block';
-  bootSequence();
+function attemptResume(){
+  fetch('/api/status', {headers: {'X-Auth-Token': TOKEN, 'ngrok-skip-browser-warning':'true'}})
+    .then(r => {
+      if (r.status === 401) { TOKEN=''; HANDLE=''; localStorage.removeItem('lc_session'); localStorage.removeItem('lc_handle'); showLock(); return; }
+      hideLock();
+      bootSequence();
+    })
+    .catch(() => showLock());
 }
 
 function bootSequence(){
@@ -573,8 +945,8 @@ function bootSequence(){
   el.textContent = '';
   lines.forEach((l,i)=> setTimeout(()=>{ el.textContent += l + '\n'; }, i*160));
   refreshAll();
-  setInterval(getSystemStatus, 10000);
-  setInterval(getOpenApps, 20000);
+  setInterval(getSystemStatus, 15000);
+  setInterval(getOpenApps, 30000);
 }
 
 let privacyRevealed = false;
@@ -582,7 +954,7 @@ let realHostName = '';
 let realPublicUrl = '';
 
 function refreshAll(){
-  getSystemStatus(); getOpenApps(); getBrightness(); getPublicUrl();
+  getSystemStatus(); getOpenApps(); getBrightness(); getPublicUrl(); loadSessions();
 }
 
 function togglePrivacy(){
@@ -590,6 +962,71 @@ function togglePrivacy(){
   document.getElementById('hostName').textContent = privacyRevealed ? (realHostName || '--') : '••••••••';
   document.getElementById('publicUrl').textContent = privacyRevealed ? (realPublicUrl || '--') : '••••••••••••••••••••••••••••••••••';
   document.getElementById('privacyToggle').textContent = privacyRevealed ? 'hide' : 'show';
+}
+
+function changeToken(){
+  const newToken = document.getElementById('newTokenInput').value.trim();
+  if (!newToken) { showNotification('[err] token cannot be empty'); return; }
+  if (newToken.length < 4) { showNotification('[err] token must be at least 4 characters'); return; }
+  api('/api/set_token', {method:'POST', body: JSON.stringify({new_token: newToken})})
+    .then(d => {
+      if (d.status === 'success') {
+        document.getElementById('newTokenInput').value = '';
+        showNotification('[ok] master token rotated — existing device sessions stay logged in');
+      } else {
+        showNotification('[err] ' + (d.message || 'failed'));
+      }
+    })
+    .catch(() => showNotification('[err] could not reach server'));
+}
+
+function logoutSession(){
+  api('/api/sessions/revoke', {method:'POST', body: JSON.stringify({handle: HANDLE})})
+    .then(() => {
+      localStorage.removeItem('lc_session');
+      localStorage.removeItem('lc_handle');
+      TOKEN = ''; HANDLE = '';
+      showLock();
+      showNotification('[ok] session ended');
+    })
+    .catch(() => {
+      localStorage.removeItem('lc_session');
+      localStorage.removeItem('lc_handle');
+      TOKEN = ''; HANDLE = '';
+      showLock();
+    });
+}
+
+function loadSessions(){
+  api('/api/sessions').then(d => {
+    const list = document.getElementById('sessList');
+    if (!d.sessions || !d.sessions.length) { list.innerHTML = '<div class="muted">none</div>'; return; }
+    list.innerHTML = d.sessions.map(s => `
+      <div class="sessitem ${s.is_you ? 'you' : ''}">
+        <div class="row1">
+          <span class="lbl">${escapeHtml(s.label)}${s.is_you ? '<span class="tag">this device</span>' : ''}</span>
+          <button onclick="revokeDevice('${s.handle}')">revoke</button>
+        </div>
+        <div class="meta">logged in ${escapeHtml(s.created)} · last seen ${escapeHtml(s.last_seen)}</div>
+      </div>
+    `).join('');
+  }).catch(()=>{});
+}
+
+function revokeDevice(handle){
+  api('/api/sessions/revoke', {method:'POST', body: JSON.stringify({handle})})
+    .then(d => {
+      if (handle === HANDLE) {
+        localStorage.removeItem('lc_session'); localStorage.removeItem('lc_handle');
+        TOKEN=''; HANDLE='';
+        showLock();
+        showNotification('[ok] this device logged out');
+        return;
+      }
+      showNotification(d.status === 'success' ? '[ok] device revoked' : `[err] ${d.message||'failed'}`);
+      loadSessions();
+    })
+    .catch(() => showNotification('[err] could not reach server'));
 }
 
 function getPublicUrl(){
@@ -636,7 +1073,7 @@ function getBrightness(){
 function updateBrightness(v){
   document.getElementById('brightnessValue').textContent = v + '%';
   api('/api/brightness', {method:'POST', body: JSON.stringify({brightness: parseInt(v)})})
-    .then(d => { if (d.status === 'success') showNotification('brightness set'); }).catch(()=>{});
+    .then(d => { if (d.status === 'success') showNotification('[ok] brightness set'); }).catch(()=>{});
 }
 
 function sendCommand(command, param=null){
@@ -646,9 +1083,7 @@ function sendCommand(command, param=null){
     .catch(()=>{});
 }
 
-function quickMsg(text){
-  document.getElementById('msgText').value = text;
-}
+function quickMsg(text){ document.getElementById('msgText').value = text; }
 
 function sendMessage(){
   const text = document.getElementById('msgText').value.trim();
@@ -679,34 +1114,42 @@ function pushClipboard(){
 let lastCaptureUrl = null;
 
 function takeScreenshot(){
-  showNotification('[ok] capturing...');
-  fetch('/api/screenshot?token=' + encodeURIComponent(TOKEN), {headers: {'ngrok-skip-browser-warning':'true'}})
-    .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.message || 'capture failed'); }); return r.blob(); })
+    showNotification('[ok] capturing...');
+    fetch('/api/screenshot?token=' + encodeURIComponent(TOKEN), {headers: {'ngrok-skip-browser-warning':'true'}})
+    .then(r => { if (!r.ok) throw new Error('failed'); return r.blob(); })
     .then(blob => {
-      if (lastCaptureUrl) URL.revokeObjectURL(lastCaptureUrl);
-      lastCaptureUrl = URL.createObjectURL(blob);
-      document.getElementById('captureImg').src = lastCaptureUrl;
-      document.getElementById('captureBox').style.display = 'block';
-      showNotification('[ok] screenshot ready');
+        if (lastCaptureUrl) URL.revokeObjectURL(lastCaptureUrl);
+        lastCaptureUrl = URL.createObjectURL(blob);
+        const img = document.getElementById('captureImg');
+        img.src = lastCaptureUrl;
+        document.getElementById('captureBox').style.display = 'block';
+        showNotification('[ok] screenshot ready');
     })
-    .catch((err) => showNotification(`[err] screenshot failed: ${err.message || 'unknown'}`));
+    .catch(() => { showNotification('[err] capture failed'); });
 }
 
 function deleteScreenshot(){
-  if (lastCaptureUrl) URL.revokeObjectURL(lastCaptureUrl);
-  lastCaptureUrl = null;
+  if (lastCaptureUrl) { URL.revokeObjectURL(lastCaptureUrl); lastCaptureUrl = null; }
   document.getElementById('captureImg').src = '';
   document.getElementById('captureBox').style.display = 'none';
   showNotification('[ok] screenshot deleted');
 }
 
+let toastTimer = null;
 function showNotification(msg){
   const n = document.getElementById('notification');
-  n.textContent = msg; n.classList.add('show');
-  clearTimeout(n._t); n._t = setTimeout(()=> n.classList.remove('show'), 2500);
+  n.textContent = msg;
+  n.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> n.classList.remove('show'), 2000);
 }
 
-if (TOKEN) { document.getElementById('tokenInput').value = TOKEN; doLogin(); }
+if (TOKEN) {
+  attemptResume();
+} else if (urlToken) {
+  document.getElementById('tokenInput').value = urlToken;
+  doLogin();
+}
 </script>
 </body>
 </html>
@@ -714,11 +1157,26 @@ if (TOKEN) { document.getElementById('tokenInput').value = TOKEN; doLogin(); }
 
 
 # ---------------------------------------------------------------------------
-# 9. Routes
+# 6. Routes
 # ---------------------------------------------------------------------------
 @app.route("/")
 def index():
     return render_template_string(HTML_TEMPLATE)
+
+
+@app.route("/api/set_token", methods=["POST"])
+def set_token():
+    global AUTH_TOKEN
+    data = request.get_json(silent=True) or {}
+    new_token = (data.get("new_token") or "").strip()
+    if not new_token or len(new_token) < 4:
+        return jsonify({"status": "error", "message": "token must be at least 4 characters"}), 400
+    CONFIG["token"] = new_token
+    if not save_config():
+        return jsonify({"status": "error", "message": "could not save new token to disk"}), 500
+    AUTH_TOKEN = new_token
+    logger.info("access token changed by user")
+    return jsonify({"status": "success", "message": "token updated"})
 
 
 @app.route("/api/public_url")
@@ -801,7 +1259,7 @@ def handle_brightness():
 @app.route("/api/clipboard", methods=["GET", "POST"])
 def handle_clipboard():
     if win32clipboard is None:
-        msg = "clipboard sync unavailable (win32clipboard failed to import — reinstall pywin32)"
+        msg = "clipboard sync unavailable"
         if request.method == "GET":
             return jsonify({"text": "", "status": "error", "message": msg})
         return jsonify({"status": "error", "message": msg}), 503
@@ -812,7 +1270,7 @@ def handle_clipboard():
     ok = set_clipboard_text(text)
     if ok:
         return jsonify({"status": "success"})
-    return jsonify({"status": "error", "message": "could not write to PC clipboard (see controller.log)"}), 500
+    return jsonify({"status": "error", "message": "could not write to PC clipboard"}), 500
 
 
 @app.route("/api/screenshot")
@@ -896,7 +1354,7 @@ def execute_command():
 
 
 # ---------------------------------------------------------------------------
-# 10. ngrok + networking helpers
+# 7. ngrok + networking helpers
 # ---------------------------------------------------------------------------
 def get_local_ip():
     try:
@@ -954,7 +1412,7 @@ def start_ngrok():
 
 
 # ---------------------------------------------------------------------------
-# 11. Flask server thread...waitress if available, else Flask dev server
+# 8. Flask server thread
 # ---------------------------------------------------------------------------
 def run_server():
     try:
@@ -969,7 +1427,7 @@ def run_server():
 
 
 # ---------------------------------------------------------------------------
-# 12. System tray
+# 9. System tray
 # ---------------------------------------------------------------------------
 def make_icon_image():
     from PIL import Image, ImageDraw, ImageFont
@@ -1025,12 +1483,9 @@ def run_tray():
 
 
 # ---------------------------------------------------------------------------
-# 13. Entry point
+# 10. Entry point
 # ---------------------------------------------------------------------------
 def is_running_headless():
-    """True if launched via pythonw.exe (no console attached) — i.e. via
-    launch_hidden.vbs or the Startup folder. False if launched via python.exe
-    directly (e.g. when troubleshooting in a visible terminal)."""
     try:
         return os.path.basename(sys.executable).lower() == "pythonw.exe"
     except Exception:
@@ -1057,19 +1512,8 @@ def main():
 
     threading.Thread(target=ngrok_startup, daemon=True).start()
 
-    # Give the server a moment before opening the dashboard
     time.sleep(1.5)
 
-    # Only auto-open the browser when launched visibly via python.exe
-    # (troubleshooting). When started headlessly via pythonw.exe — i.e.
-    # from launch_hidden.vbs or Startup....stay silent.
-    if not is_running_headless():
-        try:
-            webbrowser.open(f"http://127.0.0.1:{PORT}/?token={AUTH_TOKEN}")
-        except Exception:
-            pass
-
-    # Keep the script running forever without tray
     while True:
         time.sleep(3600)
 
