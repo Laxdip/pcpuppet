@@ -88,6 +88,9 @@ failure, and add it to `requirements.txt`.
 A few things that would slot into the existing structure without much
 rework:
 
+- **Change Windows password** — a new branch in execute_command() for "change_password" 
+  that runs `net user <username> <new_password>` hidden (no console window, no shell exposure) 
+  so you can reset a Windows user's password from your phone. Requires admin privileges.
 - **File browser / file transfer** — a new `/api/files` route using
   `os.listdir` + `send_file` to browse and download files from your PC, or
   upload files to it. Add a `.win` panel with a folder list and an
