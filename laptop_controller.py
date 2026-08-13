@@ -1,7 +1,7 @@
 """
 Lax
 =============================================
-Control your Windows laptop from your phone via a Flask web UI + Ngrok..
+Control your Windows laptop from your phone via a Flask web UI + Ngrok...
 
 """
 
