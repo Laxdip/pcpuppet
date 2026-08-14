@@ -126,7 +126,9 @@ branch in `execute_command()` (or a new route) plus a button/panel in
 - The ngrok URL is public by default; anyone who has both the URL and the
   token can reach the dashboard. Revoke sessions you don't recognize from
   the dashboard, or regenerate the token if you suspect it's leaked.
-
+- If `pystray` fails to load (missing tray icon support), the app still runs
+  headless in the background — you just won't get a tray icon; use Task
+  Manager to stop it (`pythonw.exe`), or add a stop mechanism of your choice.
 
 ## Requirements
 
