@@ -1,4 +1,4 @@
-# pcpuppet
+# pcpuppet 
 
 ## Control Your Windows PC from Your Phone
 
@@ -129,6 +129,7 @@ branch in `execute_command()` (or a new route) plus a button/panel in
 - If `pystray` fails to load (missing tray icon support), the app still runs
   headless in the background — you just won't get a tray icon; use Task
   Manager to stop it (`pythonw.exe`), or add a stop mechanism of your choice.
+- Samajhne wale ko ishara ☕
 
 ## Requirements
 
