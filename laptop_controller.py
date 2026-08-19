@@ -1115,7 +1115,7 @@ let lastCaptureUrl = null;
 
 function takeScreenshot(){
     showNotification('[ok] capturing...');
-    fetch('/api/screenshot?token=' + encodeURIComponent(TOKEN), {headers: {'ngrok-skip-browser-warning':'true'}})
+    fetch('/api/screenshot', {     headers: {         'X-Auth-Token': TOKEN,         'ngrok-skip-browser-warning': 'true'     } })
     .then(r => { if (!r.ok) throw new Error('failed'); return r.blob(); })
     .then(blob => {
         if (lastCaptureUrl) URL.revokeObjectURL(lastCaptureUrl);
