@@ -19,7 +19,7 @@ open window — all from your browser.
 
 | Features | Processes & Security |
 |---|---|
-| ![Features](screenshots/live%20screenshot.png) | ![Processes](screenshots/processes%20and%20security%20section.png) |
+| ![Features](screenshots/live%20screenshot.png) | ![Processes](screenshots/processes%20and%20security%20section.png) <br> ![Security](screenshots/security.png) |
 
 ## Features
 
