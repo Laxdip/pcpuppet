@@ -11,6 +11,16 @@ Lock, sleep, shutdown/restart, adjust volume & brightness, sync the
 clipboard, pop up an on-screen message, take a screenshot, or close an
 open window — all from your browser.
 
+## Screenshots
+
+| Login | Dashboard |
+|---|---|
+| ![Login](screenshots/login.png) | ![Dashboard](screenshots/interface.png) |
+
+| Features | Processes & Security |
+|---|---|
+| ![Features](screenshots/live%20screenshot.png) | ![Processes](screenshots/processes%20and%20security%20section.png) |
+
 ## Features
 
 - **No console window** — detaches on startup, runs via `waitress`, logs to file
