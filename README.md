@@ -1,6 +1,6 @@
 # pcpuppet 
 
-### Control Your Windows PC from Your Phone
+## Control Your Windows PC from Your Phone
 
 A lightweight self-hosted remote control panel for your own Windows laptop.
 Runs quietly in the background (no console window), exposes a small web
