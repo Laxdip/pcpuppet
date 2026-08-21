@@ -13,13 +13,13 @@ open window — all from your browser.
 
 ## Screenshots
 
-| Login | Dashboard |
-|---|---|
-| ![Login](screenshots/login.png) | ![Dashboard](screenshots/interface.png) |
+**Login** | **Dashboard**
+--- | ---
+![Login](screenshots/login.png) | ![Dashboard](screenshots/interface.png)
 
-| Features | Processes & Security |
-|---|---|
-| ![Features](screenshots/live%20screenshot.png) | ![Processes](screenshots/processes%20and%20security%20section.png) <br> ![Security](screenshots/security.png) |
+**Features** | **Processes & Security**
+--- | ---
+![Features](screenshots/live%20screenshot.png) | ![Processes](screenshots/processes%20and%20security%20section.png) <br> ![Security](screenshots/security.png)
 
 ## Features
 
