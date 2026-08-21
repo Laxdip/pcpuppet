@@ -11,15 +11,31 @@ Lock, sleep, shutdown/restart, adjust volume & brightness, sync the
 clipboard, pop up an on-screen message, take a screenshot, or close an
 open window — all from your browser.
 
-## 📸 Screenshots
+## Screenshots
 
-**Login** | **Dashboard**
---- | ---
-![Login](screenshots/login.png) | ![Dashboard](screenshots/interface.png)
+<div style="display: flex; flex-wrap: wrap; gap: 10px;">
+  <div style="flex: 1; min-width: 140px;">
+    <strong>Login</strong><br>
+    <img src="screenshots/login.png" style="width: 100%; max-width: 300px; height: auto;">
+  </div>
+  <div style="flex: 1; min-width: 140px;">
+    <strong>Dashboard</strong><br>
+    <img src="screenshots/interface.png" style="width: 100%; max-width: 300px; height: auto;">
+  </div>
+</div>
 
-**Features** | **Processes & Security**
---- | ---
-![Features](screenshots/live%20screenshot.png) | ![Processes](screenshots/processes%20and%20security%20section.png) <br> ![Security](screenshots/security.png)
+<div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px;">
+  <div style="flex: 1; min-width: 140px;">
+    <strong>Features</strong><br>
+    <img src="screenshots/live%20screenshot.png" style="width: 100%; max-width: 300px; height: auto;">
+  </div>
+  <div style="flex: 1; min-width: 140px;">
+    <strong>Processes & Security</strong><br>
+    <img src="screenshots/processes%20and%20security%20section.png" style="width: 100%; max-width: 300px; height: auto;">
+    <br>
+    <img src="screenshots/security.png" style="width: 100%; max-width: 300px; height: auto; margin-top: 8px;">
+  </div>
+</div>
 
 ## Features
 
