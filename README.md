@@ -13,29 +13,13 @@ open window — all from your browser.
 
 ## 📸 Screenshots
 
-<div style="display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-start;">
-  <div style="flex: 1; min-width: 200px;">
-    <strong>Login</strong><br>
-    <img src="screenshots/login.png" style="width: 100%; max-width: 400px; display: block;">
-  </div>
-  <div style="flex: 1; min-width: 200px;">
-    <strong>Dashboard</strong><br>
-    <img src="screenshots/interface.png" style="width: 100%; max-width: 400px; display: block;">
-  </div>
-</div>
+**Login** | **Dashboard**
+--- | ---
+![Login](screenshots/login.png) | ![Dashboard](screenshots/interface.png)
 
-<div style="display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-start; margin-top: 20px;">
-  <div style="flex: 1; min-width: 200px;">
-    <strong>Features</strong><br>
-    <img src="screenshots/live%20screenshot.png" style="width: 100%; max-width: 400px; display: block;">
-  </div>
-  <div style="flex: 1; min-width: 200px;">
-    <strong>Processes & Security</strong><br>
-    <img src="screenshots/processes%20and%20security%20section.png" style="width: 100%; max-width: 400px; display: block;">
-    <br>
-    <img src="screenshots/security.png" style="width: 100%; max-width: 400px; display: block;">
-  </div>
-</div>
+**Features** | **Processes & Security**
+--- | ---
+![Features](screenshots/live%20screenshot.png) | ![Processes](screenshots/processes%20and%20security%20section.png) <br> ![Security](screenshots/security.png)
 
 ## Features
 
