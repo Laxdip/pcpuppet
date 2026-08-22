@@ -8,8 +8,8 @@ dashboard styled like a terminal, and tunnels it to the internet via ngrok
 so you can reach it from your phone.
 
 Lock, sleep, shutdown/restart, adjust volume & brightness, sync the
-clipboard, pop up an on-screen message, take a screenshot, or close an
-open window — all from your browser.
+clipboard, pop up an on-screen message, take a live screenshot of your laptop screen directly on your mobile, or close an
+open window....all from your browser btw !
 
 ## Screenshots
 
