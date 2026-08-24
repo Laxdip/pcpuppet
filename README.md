@@ -25,7 +25,7 @@ open window....all from your browser btw !
 
 - **No console window** — detaches on startup, runs via `waitress`, logs to file
 - **System tray icon** — open dashboard, copy token, restart tunnel, exit
-- **Per-device sessions** — log in once per device, revoke access per-device
+- **Per-device sessions** — log in once per device, revoke access per device
 - **Second password gate** for extra-sensitive actions
 - **Every action is sandboxed** — one failing feature (e.g. no battery, no
   `pycaw`) never takes the rest of the app down
