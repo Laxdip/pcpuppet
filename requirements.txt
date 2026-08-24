@@ -14,4 +14,4 @@ opencv-python
 pyautogui
 pynput
 schedule
-
+python-dotenv
