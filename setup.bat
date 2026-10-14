@@ -8,7 +8,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
 echo.
-echo Done. Start the app with launch_hidden.vbs
+echo Done. Start the app with startup_launcher.vbs
 echo To auto-start at login: press Win+R, type shell:startup, and drop a
-echo shortcut to launch_hidden.vbs into that folder.
+echo shortcut to startup_launcher.vbs into that folder.
 pause
