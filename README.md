@@ -1,15 +1,32 @@
-# pcpuppet 
+# pcpuppet
 
 ## Control Your Windows PC From Your Phone
 
-A lightweight self hosted remote control panel for your own Windows laptop.
+A lightweight self-hosted remote control panel for your own Windows laptop.
 Runs quietly in the background (no console window), exposes a small web
 dashboard styled like a terminal, and tunnels it to the internet via ngrok
 so you can reach it from your phone.
 
 Lock, sleep, shutdown/restart, adjust volume & brightness, sync the
-clipboard, pop up an on-screen message, take a live screenshot of your laptop screen directly on your mobile, or close an
-open window....all from your browser btw !
+clipboard, pop up an on-screen message, take a live screenshot of your laptop
+screen directly on your mobile, or close an open window — all from your
+browser.
+
+> ## ⚠️ Dual-use tool notice
+> pcpuppet is a remote administration tool intended for **your own devices**.
+> It can lock, shut down, capture the screen, read the clipboard, and (in
+> `v2-credential-control`) change Windows credentials.
+>
+> **Do not run a `config.json` or a pre-built copy you did not create
+> yourself.** The tool trusts whatever token is in its config file — a
+> tampered copy is a backdoor.
+
+## Versions
+
+| Folder | Status | Notes |
+|---|---|---|
+| `./` (root) | v1 stable | Original release — see setup below |
+| `v2-credential-control/` | stable | Adds Windows password change with server-side security gate |
 
 ## Screenshots
 
@@ -104,8 +121,8 @@ If `ngrok.exe` is not in your PATH, set the `NGROK_PATH` environment variable:
 
 2. **Find your access token**:
    - Right-click the tray icon → "Copy Access Token"
-   - **OR** open `C:\Users\YourUsername\AppData\Local\LaptopController\controller.log`
-   - Look for the line: `Access token: YOUR_TOKEN_HERE`
+   - **OR** open `C:\Users\YourUsername\AppData\Local\LaptopController\config.json`
+   - The token is in the `"token"` field (it is **not** written to the log)
 
 3. **Open the dashboard**:
    - Right-click tray icon → "Open Dashboard"
@@ -153,7 +170,7 @@ lives outside the repo, in `%LOCALAPPDATA%\LaptopController\`:
 |---|---|
 | `config.json` | your access token + local security password |
 | `sessions.json` | active device sessions |
-| `controller.log` | full activity log, including your token on first run |
+| `controller.log` | activity log (the auth token is **not** logged) |
 
 ## Changing the access token or security password
 
@@ -192,14 +209,15 @@ automatically unless you explicitly exempt it there.
 `screen_brightness_control` or `pygetwindow` are, set it to `None` on
 failure, and add it to `requirements.txt`.
 
+**Adding a dangerous command?** See the `v2-credential-control` folder for
+the pattern used to gate elevated commands (`change_password`) behind the
+security password **server-side**, not just in the UI.
+
 ## Ideas for features you could add
 
 A few things that would slot into the existing structure without much
 rework:
 
-- **Change Windows password** — a new branch in execute_command() for "change_password" 
-  that runs `net user <username> <new_password>` hidden (no console window, no shell exposure) 
-  so you can reset a Windows user's password from your phone. Requires admin privileges.
 - **File browser / file transfer** — a new `/api/files` route using
   `os.listdir` + `send_file` to browse and download files from your PC, or
   upload files to it. Add a `.win` panel with a folder list and an
@@ -218,11 +236,10 @@ rework:
 - **Scheduled actions** — add a `schedule` (pip package) job or a simple
   timer thread so you can queue "lock at 11pm" or "shutdown in 2 hours" from
   the dashboard, instead of only the fixed `-t 5` in `execute_command()`.
-- **Multi-factor for dangerous commands** — require the `security_password`
-  (not just the session token) specifically for `shutdown`/`restart`, by
-  checking it inside those branches of `execute_command()` — right now the
-  second password only guards `/api/security/unlock`, not individual
-  commands.
+- **Multi-factor for dangerous commands** — the `v2-credential-control`
+  folder already does this for `change_password`, `shutdown`, and `restart`.
+  You can extend the same `ELEVATED_COMMANDS` pattern to any new destructive
+  command you add.
 
 If you build one of these, it'll fit the same pattern described above: a
 branch in `execute_command()` (or a new route) plus a button/panel in
@@ -235,10 +252,11 @@ branch in `execute_command()` (or a new route) plus a button/panel in
 - The ngrok URL is public by default; anyone who has both the URL and the
   token can reach the dashboard. Revoke sessions you don't recognize from
   the dashboard, or regenerate the token if you suspect it's leaked.
+- **Never run a `config.json`, `sessions.json`, or pre-built copy from an
+  untrusted source.** A tampered config means someone else holds your token.
 - If `pystray` fails to load (missing tray icon support), the app still runs
   headless in the background — you just won't get a tray icon; use Task
   Manager to stop it (`pythonw.exe`), or add a stop mechanism of your choice.
-- Samajhne wale ko ishara ☕
 
 ## Requirements
 
